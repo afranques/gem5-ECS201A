@@ -55,6 +55,10 @@ SimpleCache::SimpleCache(SimpleCacheParams *params) :
     if (assoc == Enums::DirectMapped) {
         cacheStoreDM.resize(capacity);
     }
+
+    Callback *reset =
+        new MakeCallback<SimpleCache, &SimpleCache::resetColdMiss>(this);
+    Stats::registerResetCallback(reset);
 }
 
 BaseMasterPort&
@@ -418,7 +422,8 @@ SimpleCache::writeback(Addr addr, uint8_t* data)
 }
 
 void
-SimpleCache::insert(PacketPtr pkt) {
+SimpleCache::insert(PacketPtr pkt)
+{
     if (assoc == Enums::FullyAssociative) {
         return insertFA(pkt);
     } else if (assoc == Enums::DirectMapped) {
@@ -426,6 +431,14 @@ SimpleCache::insert(PacketPtr pkt) {
     } else {
         panic("Invalid associativity");
     }
+}
+
+void
+SimpleCache::resetColdMiss()
+{
+    // This is called when reset stats is called.
+    // You probably want to add something here so you can track the cold misses
+    // for just the ROI
 }
 
 void
@@ -543,6 +556,9 @@ SimpleCache::regStats()
 
     hitRatio = hits / (hits + misses);
 
+    coldMisses.name(name() + ".coldMisses")
+        .desc("The number of cold misses")
+        ;
 }
 
 

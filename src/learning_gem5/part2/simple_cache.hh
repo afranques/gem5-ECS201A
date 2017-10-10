@@ -31,6 +31,7 @@
 #ifndef __LEARNING_GEM5_SIMPLE_CACHE_SIMPLE_CACHE_HH__
 #define __LEARNING_GEM5_SIMPLE_CACHE_SIMPLE_CACHE_HH__
 
+#include <set>
 #include <unordered_map>
 
 #include "enums/Assoc.hh"
@@ -322,6 +323,7 @@ class SimpleCache : public MemObject
     Stats::Scalar misses;
     Stats::Histogram missLatency;
     Stats::Formula hitRatio;
+    Stats::Scalar coldMisses;
 
   public:
 
@@ -359,6 +361,11 @@ class SimpleCache : public MemObject
      * Register the stats
      */
     void regStats() override;
+
+    /**
+     * Resets the cold miss tracking data structure
+     */
+    void resetColdMiss();
 };
 
 
