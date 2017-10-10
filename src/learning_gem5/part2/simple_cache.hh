@@ -33,6 +33,7 @@
 
 #include <unordered_map>
 
+#include "enums/Assoc.hh"
 #include "mem/mem_object.hh"
 #include "params/SimpleCache.hh"
 
@@ -238,6 +239,14 @@ class SimpleCache : public MemObject
      * @return true if a hit, false otherwise
      */
     bool accessFunctional(PacketPtr pkt);
+    bool accessFA(PacketPtr pkt);
+    bool accessDM(PacketPtr pkt);
+
+    /**
+     * Creates a new packet with addr and data to writeback the data to memory
+     * and sends the packet downstream
+     */
+    void writeback(Addr addr, uint8_t* data);
 
     /**
      * Insert a block into the cache. If there is no room left in the cache,
@@ -246,6 +255,8 @@ class SimpleCache : public MemObject
      * @param packet with the data (and address) to insert into the cache
      */
     void insert(PacketPtr pkt);
+    void insertFA(PacketPtr pkt);
+    void insertDM(PacketPtr pkt);
 
     /**
      * Return the address ranges this cache is responsible for. Just use the
@@ -269,6 +280,9 @@ class SimpleCache : public MemObject
     /// Number of blocks in the cache (size of cache / block size)
     const unsigned capacity;
 
+    /// The associativity of the cache (fully associative or direct mapped)
+    const Enums::Assoc assoc;
+
     /// Instantiation of the CPU-side port
     std::vector<CPUSidePort> cpuPorts;
 
@@ -288,8 +302,20 @@ class SimpleCache : public MemObject
     /// For tracking the miss latency
     Tick missTime;
 
+    /// A simple structure for tracking cache blocks (valid isn't needed for
+    /// the fully associative cache).
+    struct CacheBlock {
+        bool valid;
+        Addr addr;
+        uint8_t *data;
+        CacheBlock() : valid(false), addr(0), data(nullptr) { }
+    };
+
     /// An incredibly simple cache storage. Maps block addresses to data
     std::unordered_map<Addr, uint8_t*> cacheStore;
+
+    /// A direct mapped cache store
+    std::vector<CacheBlock> cacheStoreDM;
 
     /// Cache statistics
     Stats::Scalar hits;

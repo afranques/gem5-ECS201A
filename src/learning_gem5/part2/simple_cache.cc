@@ -39,6 +39,7 @@ SimpleCache::SimpleCache(SimpleCacheParams *params) :
     latency(params->latency),
     blockSize(params->system->cacheLineSize()),
     capacity(params->size / blockSize),
+    assoc(params->assoc),
     memPort(params->name + ".mem_side", this),
     blocked(false), outstandingPacket(nullptr), waitingPortId(-1)
 {
@@ -48,6 +49,11 @@ SimpleCache::SimpleCache(SimpleCacheParams *params) :
     // holds the number of connections to this port name
     for (int i = 0; i < params->port_cpu_side_connection_count; ++i) {
         cpuPorts.emplace_back(name() + csprintf(".cpu_side[%d]", i), i, this);
+    }
+
+    // If we're using a direct-mapped cache, allocate the cache blocks.
+    if (assoc == Enums::DirectMapped) {
+        cacheStoreDM.resize(capacity);
     }
 }
 
@@ -345,7 +351,7 @@ SimpleCache::accessTiming(PacketPtr pkt)
 }
 
 bool
-SimpleCache::accessFunctional(PacketPtr pkt)
+SimpleCache::accessFA(PacketPtr pkt)
 {
     Addr block_addr = pkt->getBlockAddr(blockSize);
     auto it = cacheStore.find(block_addr);
@@ -364,8 +370,66 @@ SimpleCache::accessFunctional(PacketPtr pkt)
     return false;
 }
 
+bool
+SimpleCache::accessDM(PacketPtr pkt)
+{
+    Addr block_addr = pkt->getBlockAddr(blockSize);
+    uint64_t index = block_addr % capacity;
+    if (cacheStoreDM[index].valid && cacheStoreDM[index].addr == block_addr) {
+        // hit
+        if (pkt->isWrite()) {
+            // Write the data into the block in the cache
+            pkt->writeDataToBlock(cacheStoreDM[index].data, blockSize);
+        } else if (pkt->isRead()) {
+            // Read the data out of the cache block into the packet
+            pkt->setDataFromBlock(cacheStoreDM[index].data, blockSize);
+        } else {
+            panic("Unknown packet type!");
+        }
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool
+SimpleCache::accessFunctional(PacketPtr pkt)
+{
+    if (assoc == Enums::FullyAssociative) {
+        return accessFA(pkt);
+    } else if (assoc == Enums::DirectMapped) {
+        return accessDM(pkt);
+    } else {
+        panic("Invalid associativity");
+    }
+}
+
 void
-SimpleCache::insert(PacketPtr pkt)
+SimpleCache::writeback(Addr addr, uint8_t* data)
+{
+    // Create a new request-packet pair
+    RequestPtr req = new Request(addr, blockSize, 0, 0);
+    PacketPtr new_pkt = new Packet(req, MemCmd::WritebackDirty, blockSize);
+    new_pkt->dataDynamic(data); // This will be deleted later
+
+    DPRINTF(SimpleCache, "Writing packet back %s\n", new_pkt->print());
+    // Send the write to memory
+    memPort.sendTimingReq(new_pkt);
+}
+
+void
+SimpleCache::insert(PacketPtr pkt) {
+    if (assoc == Enums::FullyAssociative) {
+        return insertFA(pkt);
+    } else if (assoc == Enums::DirectMapped) {
+        return insertDM(pkt);
+    } else {
+        panic("Invalid associativity");
+    }
+}
+
+void
+SimpleCache::insertFA(PacketPtr pkt)
 {
     // The packet should be aligned.
     assert(pkt->getAddr() ==  pkt->getBlockAddr(blockSize));
@@ -387,14 +451,7 @@ SimpleCache::insert(PacketPtr pkt)
         DPRINTF(SimpleCache, "Removing addr %#x\n", block->first);
 
         // Write back the data.
-        // Create a new request-packet pair
-        RequestPtr req = new Request(block->first, blockSize, 0, 0);
-        PacketPtr new_pkt = new Packet(req, MemCmd::WritebackDirty, blockSize);
-        new_pkt->dataDynamic(block->second); // This will be deleted later
-
-        DPRINTF(SimpleCache, "Writing packet back %s\n", pkt->print());
-        // Send the write to memory
-        memPort.sendTimingReq(new_pkt);
+        writeback(block->first, block->second);
 
         // Delete this entry
         cacheStore.erase(block->first);
@@ -408,6 +465,38 @@ SimpleCache::insert(PacketPtr pkt)
 
     // Insert the data and address into the cache store
     cacheStore[pkt->getAddr()] = data;
+
+    // Write the data into the cache
+    pkt->writeDataToBlock(data, blockSize);
+}
+
+void
+SimpleCache::insertDM(PacketPtr pkt) {
+    // The packet should be aligned.
+    assert(pkt->getAddr() ==  pkt->getBlockAddr(blockSize));
+    // The pkt should be a response
+    assert(pkt->isResponse());
+
+    uint64_t index = pkt->getAddr() % capacity;
+
+    // The address should not be in the cache
+    assert(!cacheStoreDM[index].valid ||
+           cacheStoreDM[index].addr != pkt->getAddr());
+
+    if (cacheStoreDM[index].valid) {
+        // Need to evict this block
+        writeback(cacheStoreDM[index].addr, cacheStoreDM[index].data);
+    }
+    DPRINTF(SimpleCache, "InsertingDM %s\n", pkt->print());
+    DDUMP(SimpleCache, pkt->getConstPtr<uint8_t>(), blockSize);
+
+    // Allocate space for the cache block data
+    uint8_t *data = new uint8_t[blockSize];
+
+    // Insert the data and address into the cache store
+    cacheStoreDM[index].valid = true;
+    cacheStoreDM[index].addr = pkt->getAddr();
+    cacheStoreDM[index].data = data;
 
     // Write the data into the cache
     pkt->writeDataToBlock(data, blockSize);

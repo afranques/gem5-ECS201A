@@ -2,6 +2,8 @@ from m5.params import *
 from m5.proxy import *
 from MemObject import MemObject
 
+class Assoc(Enum): vals = ['FullyAssociative', 'DirectMapped']
+
 class SimpleCache(MemObject):
     type = 'SimpleCache'
     cxx_header = "learning_gem5/part2/simple_cache.hh"
@@ -14,5 +16,7 @@ class SimpleCache(MemObject):
     latency = Param.Cycles(1, "Cycles taken on a hit or to resolve a miss")
 
     size = Param.MemorySize('16kB', "The size of the cache")
+
+    assoc = Param.Assoc('FullyAssociative', "The associativity of the cache")
 
     system = Param.System(Parent.any, "The system this cache is part of")
